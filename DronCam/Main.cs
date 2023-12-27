@@ -3,38 +3,33 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
 using System.Windows.Forms;
-using System.Xml.XPath;
 using AForge.Video;
 using AForge.Video.DirectShow;
-using Emgu.CV;
-using Emgu.CV.CvEnum;
-using Emgu.CV.Structure;
-using Emgu.CV.UI;
-using Emgu.Util;
-using Emgu.Util;
 using ZXing;
-using static System.Windows.Forms.VisualStyles.VisualStyleElement;
 
 namespace DronCam
 {
-    public partial class Main : System.Windows.Forms.Form
+	public partial class Main : System.Windows.Forms.Form
     {
         private FilterInfoCollection videoDevices;
         private List<PictureBox> pictureBoxesList;
-        private List<string> deviceList;
-        private BarcodeReader _barcodeReader;
-        private VideoCapture _videoCapture;
+        private bool[] qrCodeDetectedStates; // Состояния для каждого QR-кода
+        private bool allQRCodesDetected = false; // Переменная для общего состояния
+
         public Main()
         {
             pictureBoxesList = new List<PictureBox>();
-            _barcodeReader = new BarcodeReader();
-
             InitializeComponent();
         }
 
         private void Form1_Load(object sender, EventArgs e)
         {
             GetVideoDevices();
+            qrCodeDetectedStates = new bool[4];
+            for (int i = 0; i < qrCodeDetectedStates.Length; i++)
+            {
+                qrCodeDetectedStates[i] = false;
+            }
             for (int index = 0; index < videoDevices.Count; index++)
             {
                 int localIndex = index;
@@ -43,20 +38,9 @@ namespace DronCam
                 videoSource.NewFrame += new NewFrameEventHandler((s, args) => videoSource_NewFrame(s, args, localIndex));
                 videoSource.Start();
             }
-            _videoCapture = new VideoCapture();
-            Application.Idle += VideoCaptureOnFrameGrabbed;
-        }
-        private void VideoCaptureOnFrameGrabbed(object sender, EventArgs e)
-        {
-            Mat frame = new Mat();
-            _videoCapture.Retrieve(frame, 0);
 
-            if (frame != null)
-            {
-                FindAndDecodeBarcode(frame);
-                imageBox1.Image = frame;
-            }
         }
+
         private void GetVideoDevices()
         {
             videoDevices = new FilterInfoCollection(FilterCategory.VideoInputDevice);
@@ -81,11 +65,7 @@ namespace DronCam
 
             AddPictureBoxes();
         }
-        private void InitializeTableLayoutPanel()
-        {
-            tableLayoutPanel1.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
-            this.Controls.Add(tableLayoutPanel1);
-        }
+
         private void AddPictureBoxes()
         {
             for (int row = 0; row < tableLayoutPanel1.RowCount; row++)
@@ -101,10 +81,88 @@ namespace DronCam
                 }
             }
         }
-        private void button1_Click(object sender, EventArgs e)
+        private void DrawBoundingBox(PictureBox pictureBox, ResultPoint[] resultPoints)
         {
-           
+            Graphics graphics = Graphics.FromImage(pictureBox.Image);
+            Pen pen = new Pen(Color.Red, 2);
+
+            // Преобразование координат ResultPoint в координаты PictureBox
+            PointF[] points = Array.ConvertAll(resultPoints, rp => new PointF(rp.X * pictureBox.Width, rp.Y * pictureBox.Height));
+
+            // Отрисовка прямоугольника вокруг QR-кода
+            graphics.DrawPolygon(pen, points);
+
+            // Обновление PictureBox
+            pictureBox.Invalidate();
         }
+
+        private void DecodeQRCode(Bitmap bitmap, int index)
+        {
+            try
+            {
+                BarcodeReader reader = new BarcodeReader();
+                Result[] results = reader.DecodeMultiple(bitmap);
+
+                if (results != null && results.Length > 0)
+                {
+                    foreach (Result result in results)
+                    {
+                        string decodedData = result.Text;
+                        Console.WriteLine($"{index} камера распознала QR код: {decodedData}");
+
+                        if (decodedData == "верх")
+                        {
+                            qrCodeDetectedStates[0] = true;
+                            DrawBoundingBox(pictureBoxesList[index], result.ResultPoints);
+                        }
+                        if (decodedData == "низ")
+                        {
+                            qrCodeDetectedStates[1] = true;
+                            DrawBoundingBox(pictureBoxesList[index], result.ResultPoints);
+                        }
+                        if (decodedData == "лево")
+                        {
+                            qrCodeDetectedStates[2] = true;
+                            DrawBoundingBox(pictureBoxesList[index], result.ResultPoints);
+                        }
+                        if (decodedData == "право")
+                        {
+                            qrCodeDetectedStates[3] = true;
+                            DrawBoundingBox(pictureBoxesList[index], result.ResultPoints);
+                        }
+                    }
+                }
+
+                CheckAllQRCodesDetected();
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine("Error decoding QR Codes: " + ex.Message);
+            }
+        }
+
+        private void CheckAllQRCodesDetected()
+        {
+            // Проверка, обнаружены ли все QR-коды
+            allQRCodesDetected = true;
+            for (int i = 0; i < qrCodeDetectedStates.Length; i++)
+            {
+                if (!qrCodeDetectedStates[i])
+                {
+                    allQRCodesDetected = false;
+                    break;
+                }
+            }
+
+            // Вывод соответствующего сообщения
+            if (allQRCodesDetected)
+            {
+                Console.WriteLine("Найдено!");
+            }
+            Console.WriteLine($"{qrCodeDetectedStates[0]} {qrCodeDetectedStates[1]} {qrCodeDetectedStates[2]} {qrCodeDetectedStates[3]}");
+
+        }
+
 
 
         private void videoSource_NewFrame(object sender, NewFrameEventArgs eventArgs, int index)
@@ -118,43 +176,12 @@ namespace DronCam
                 UpdatePictureBoxes(eventArgs.Frame.Clone() as Bitmap, index);
             }
         }
-        private void FindAndDecodeBarcode(Mat frame)
-        {
-            if (frame == null)
-                return;
 
-            Image<Bgr, byte> img = frame.ToImage<Bgr, byte>();
-
-            // Преобразование кадра в изображение Gray для улучшения производительности
-            UMat uimage = new UMat();
-            CvInvoke.CvtColor(img, uimage, ColorConversion.Bgr2Gray);
-            Bitmap grayBitmap = uimage.ToBitmap();
-            // Декодирование штрих-кода
-            var result = _barcodeReader.Decode(grayBitmap);
-
-            if (result != null)
-            {
-                ShowBarcodeResult(result.Text);
-            }
-        }
-
-
-        private void ShowBarcodeResult(string barcodeText)
-        {
-            if (InvokeRequired)
-            {
-                Invoke(new Action(() => ShowBarcodeResult(barcodeText)));
-            }
-            else
-            {
-                // Обработка результатов штрих-кода
-                textBox1.Text = barcodeText;
-            }
-        }
 
         private void UpdatePictureBoxes(Bitmap frame, int index)
         {
             pictureBoxesList[index].Image = frame;
+            DecodeQRCode(frame, index);
         }
 
         private void Main_SizeChanged(object sender, EventArgs e)
