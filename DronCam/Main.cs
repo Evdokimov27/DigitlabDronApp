@@ -12,6 +12,8 @@ namespace DronCam
 	public partial class Main : System.Windows.Forms.Form
     {
         private FilterInfoCollection videoDevices;
+        List<String> videoDevicesName = new List<string>();
+        BarcodeReader barcodeReader = new BarcodeReader();
         private List<PictureBox> pictureBoxesList;
         private bool[] qrCodeDetectedStates; // Состояния для каждого QR-кода
         private bool allQRCodesDetected = false; // Переменная для общего состояния
@@ -30,11 +32,11 @@ namespace DronCam
             {
                 qrCodeDetectedStates[i] = false;
             }
-            for (int index = 0; index < videoDevices.Count; index++)
+            for (int index = 0; index < videoDevicesName.Count; index++)
             {
                 int localIndex = index;
                 VideoCaptureDevice videoSource = new VideoCaptureDevice();
-                videoSource = new VideoCaptureDevice(videoDevices[localIndex].MonikerString);
+                videoSource = new VideoCaptureDevice(videoDevicesName[localIndex]);
                 videoSource.NewFrame += new NewFrameEventHandler((s, args) => videoSource_NewFrame(s, args, localIndex));
                 videoSource.Start();
             }
@@ -44,10 +46,19 @@ namespace DronCam
         private void GetVideoDevices()
         {
             videoDevices = new FilterInfoCollection(FilterCategory.VideoInputDevice);
-            tableLayoutPanel1.ColumnCount = Math.Min(videoDevices.Count, 2);
-            tableLayoutPanel1.RowCount = (int)Math.Ceiling((double)videoDevices.Count / tableLayoutPanel1.ColumnCount);
-            //if (videoDevices.Count < 4) tableLayoutPanel1.ColumnCount = videoDevices.Count;
-            //else if (videoDevices.Count > 3)
+
+            foreach (FilterInfo device in videoDevices)
+            {
+                if (device.Name.Contains("USB2.0 PC CAMERA"))
+                {
+                    videoDevicesName.Add(device.MonikerString);
+                    comboBox1.Items.Add(device.Name);
+                }
+            }
+            tableLayoutPanel1.ColumnCount = Math.Min(videoDevicesName.Count, 2);
+            tableLayoutPanel1.RowCount = (int)Math.Ceiling((double)videoDevicesName.Count / tableLayoutPanel1.ColumnCount);
+            //if (videoDevicesName.Count < 4) tableLayoutPanel1.ColumnCount = videoDevicesName.Count;
+            //else if (videoDevicesName.Count > 3)
             //{
             //    tableLayoutPanel1.ColumnCount = 2;
             //    tableLayoutPanel1.RowCount = 2;
@@ -105,30 +116,57 @@ namespace DronCam
 
                 if (results != null && results.Length > 0)
                 {
+                    Console.WriteLine($"{index} камера распознала {results.Length} QR кодов {results.GetHashCode()}");
                     foreach (Result result in results)
                     {
                         string decodedData = result.Text;
-                        Console.WriteLine($"{index} камера распознала QR код: {decodedData}");
-
                         if (decodedData == "верх")
                         {
                             qrCodeDetectedStates[0] = true;
                             DrawBoundingBox(pictureBoxesList[index], result.ResultPoints);
+                        }
+                        else
+                        {
+                            qrCodeDetectedStates[0] = false;
+                            qrCodeDetectedStates[1] = false;
+                            qrCodeDetectedStates[2] = false;
+                            qrCodeDetectedStates[3] = false;
                         }
                         if (decodedData == "низ")
                         {
                             qrCodeDetectedStates[1] = true;
                             DrawBoundingBox(pictureBoxesList[index], result.ResultPoints);
                         }
+                        else
+                        {
+                            qrCodeDetectedStates[0] = false;
+                            qrCodeDetectedStates[1] = false;
+                            qrCodeDetectedStates[2] = false;
+                            qrCodeDetectedStates[3] = false;
+                        }
                         if (decodedData == "лево")
                         {
                             qrCodeDetectedStates[2] = true;
                             DrawBoundingBox(pictureBoxesList[index], result.ResultPoints);
                         }
+                        else
+                        {
+                            qrCodeDetectedStates[0] = false;
+                            qrCodeDetectedStates[1] = false;
+                            qrCodeDetectedStates[2] = false;
+                            qrCodeDetectedStates[3] = false;
+                        }
                         if (decodedData == "право")
                         {
                             qrCodeDetectedStates[3] = true;
                             DrawBoundingBox(pictureBoxesList[index], result.ResultPoints);
+                        }
+                        else
+                        {
+                            qrCodeDetectedStates[0] = false;
+                            qrCodeDetectedStates[1] = false;
+                            qrCodeDetectedStates[2] = false;
+                            qrCodeDetectedStates[3] = false;
                         }
                     }
                 }
@@ -218,8 +256,43 @@ namespace DronCam
             }
             pictureBoxesList.Clear();
             AddPictureBoxes();
-
-
         }
+
+
+        private Dictionary<int, DroneTimingInfo> droneTimings = new Dictionary<int, DroneTimingInfo>();
+        private object lockObject = new object();
+        private void UpdateDroneTiming(int droneID)
+        {
+            lock (lockObject)
+            {
+                if (!droneTimings.ContainsKey(droneID))
+                {
+                    // Создание новой записи для коптера
+                    droneTimings[droneID] = new DroneTimingInfo
+                    {
+                        DroneID = droneID,
+                        StartTime = DateTime.Now
+                    };
+                }
+                else
+                {
+                    // Обновление времени завершения для коптера
+                    droneTimings[droneID].FinishTime = DateTime.Now;
+
+                    // Вычисление времени прохождения
+                    TimeSpan elapsedTime = droneTimings[droneID].FinishTime - droneTimings[droneID].StartTime;
+                    Console.WriteLine($"Коптер {droneID}: Прохождение за {elapsedTime.TotalSeconds} секунд.");
+
+                    // Опционально: Сбросить информацию о времени для следующего круга
+                    droneTimings.Remove(droneID);
+                }
+            }
+        }
+    }
+    public class DroneTimingInfo
+    {
+        public int DroneID { get; set; }
+        public DateTime StartTime { get; set; }
+        public DateTime FinishTime { get; set; }
     }
 }
